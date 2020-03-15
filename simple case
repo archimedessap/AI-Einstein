@@ -1,0 +1,74 @@
+import torch
+import torch.nn as nn
+import torch.utils.data as Data
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+import numpy as np
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
+#Hyper parameter
+EPOCH=10
+BATCH_SIZE=20
+LR=0.05 #learning rate
+
+c=30 # speed of light
+v1=c/2 #speed of object in static frame
+v2=c/4 #speed of moving frame （1)
+v3=-c/4 #speed of moving frame (2)
+
+t1=torch.unsqueeze(torch.linspace(1,500,500),dim=1) #time of static frame
+x1=v1*t1+torch.randn(t1.size()) # coordirate of object in static frame
+
+x2=(v1*t1-v2*t1)/pow((1-v2*v2/c*c),0.5)+torch.randn(t1.size()) #  coordirate of object in moving frame(1）
+t2=(t1-v2*v1*t1)/pow((1-v2*v2/c*c),0.5) # time in moving frame(1)
+x3=(v1*t1-v3*t1)/pow((1-v3*v3/c*c),0.5)+torch.randn(t1.size())#coordirate of object in moving frame(2）
+t3=(t1-v3*v1*t1)/pow((1-v3*v3/c*c),0.5)#time in moving frame(2)
+
+#x2=(v1*t1-v2*t1)/0.96+torch.randn(t1.size()) 
+#t2=(t1-v2*v1*t1)/0.96 
+#x3=(v1*t1-v3*t1)/0.96+torch.randn(t1.size())
+#t3=(t1-v3*v1*t1)/0.96
+
+x=torch.cat((x1,x2,x3,t1,t2,t3),1)
+
+torch_dataset=Data.TensorDataset(x,x)
+loader=Data.DataLoader(
+    dataset=torch_dataset,
+    batch_size=BATCH_SIZE,
+    shuffle=True)
+
+class AutoEncoder(nn.Module):
+    def __init__(self):
+        super(AutoEncoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(6, 4),
+            #nn.Tanh(),
+            nn.Linear(4, 2),   # compress to 2 features which can be visualized in plt
+                    )
+        self.decoder = nn.Sequential(
+            nn.Linear(2, 4),
+            #nn.Tanh(),
+            nn.Linear(4, 6),
+                    )    
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return encoded, decoded
+    
+autoencoder = AutoEncoder()
+optimizer = torch.optim.Adam(autoencoder.parameters(), lr=LR)
+loss_func = torch.nn.MSELoss()
+
+for epoch in range(EPOCH):
+    for step,(b_x,b_y) in enumerate(loader):
+        encoded,decoded=autoencoder(b_x)
+        loss=loss_func(decoded,b_y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        if step % 5 == 0:
+            print('Epoch: ', epoch, '| train loss: %.4f' % loss.data.numpy())
+
