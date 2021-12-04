@@ -196,19 +196,6 @@ plt.scatter(v_l,encoded*10000000)  #l方向相对于以太的速度，与模型�
 #plt.ylim((15.6451,15.646))
 plt.show
 
-#test
-autoencoder.eval()  # 让模型处于检测模式
-with torch.no_grad():
-    encoded,output=autoencoder(x1)
-    
-print(torch.div(output,y1))
-
-plt.scatter(v_e,encoded*100000000)  #l方向相对于以太的速度，与模型找到的结构之间的关系
-#plt.scatter(th,-b*100000) 
-#plt.scatter(th,dt)
-#plt.xlim((0,10))
-#plt.ylim((15.6451,15.646))
-plt.show
 
 
 
