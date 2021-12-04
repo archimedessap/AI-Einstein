@@ -6,51 +6,88 @@ from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 import numpy as np
 import os
+import math
+import itertools
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-#Hyper parameter
-EPOCH=10
-BATCH_SIZE=20
-LR=0.05 #learning rate
+#Hyper Parameter
+num_epochs=10
+batch_size=5
+LR=0.1 #learning rate
+np.set_printoptions(precision=16)
+torch.set_default_dtype(torch.float64)
 
-c=30 # speed of light
-v1=c/2 #speed of object in static frame
-v2=c/4 #speed of moving frame （1)
-v3=-c/4 #speed of moving frame (2)
 
-t1=torch.unsqueeze(torch.linspace(1,500,500),dim=1) #time of static frame
-x1=v1*t1+torch.randn(t1.size()) # coordirate of object in static frame
+#光行差数据集 
+t=0.001 #时间t=0.001s 也就是假设在望远镜和星光交汇之前的t时间,其实可以约去也就是设置t为1
+c=300000000 # speed of light
+v_Earth=30000 # 地球轨道速度 以光速为单位
+th=torch.unsqueeze(torch.linspace(0,math.pi*2,200),dim=1).double() #地球周年旋转一周，分为200间隔
+v_e=np.sin(th)*v_Earth  #相对于以太的某个方向，地球一年内的速度变化
+b=math.pi/2 #恒星真实的角度 这里统一采用垂直方向
+r_abre=1/pow(1-pow(v_e,2)/pow(c,2),0.5) #洛伦兹系数
+tan_a=math.sin(b)/torch.mul(r_abre,v_e/c+math.cos(b)) #相对论的解释公式
+a=torch.atan(tan_a)  #观测到的角度
 
-x2=(v1*t1-v2*t1)/pow((1-v2*v2/c*c),0.5)+torch.randn(t1.size()) #  coordirate of object in moving frame(1）
-t2=(t1-v2*v1*t1)/pow((1-v2*v2/c*c),0.5) # time in moving frame(1)
-x3=(v1*t1-v3*t1)/pow((1-v3*v3/c*c),0.5)+torch.randn(t1.size())#coordirate of object in moving frame(2）
-t3=(t1-v3*v1*t1)/pow((1-v3*v3/c*c),0.5)#time in moving frame(2)
+x1=torch.ones(200,100)*c*t #输入为在静止以太预设下 星光在t时间走过的路程
+x1=x1.double()
 
-#x2=(v1*t1-v2*t1)/0.96+torch.randn(t1.size()) 
-#t2=(t1-v2*v1*t1)/0.96 
-#x3=(v1*t1-v3*t1)/0.96+torch.randn(t1.size())
-#t3=(t1-v3*v1*t1)/0.96
+#输出为在同样的预设下，根据观测角度算出的地球在t时间走过的
+y1=v_e*t/(np.sin(b)/np.tan(a)-np.cos(b)).expand(200,100).double() 
+#光行差实验数据
 
-x=torch.cat((x1,x2,x3,t1,t2,t3),1)
 
-torch_dataset=Data.TensorDataset(x,x)
-loader=Data.DataLoader(
-    dataset=torch_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=True)
 
+
+#MM实验数据
+lam=500*0.000000001 #波长
+#x=(0.862,0.832,0.824,0.788,0.754,0.762,0.758,0.756,0.706,0.692,0.686,0.688,0.688,0.678,0.672,0.628,0.616)
+#dt=x*0.02*lam/(2*c) #lam为波长，x*0.02为实验得到的
+x=torch.rand(200,100).double()
+dt=x*0.01*lam/(2*c) #扩充实验测得的时间差数据，与实验数据在同一个数量级
+
+#MM数据集
+L=11 #仪器臂长
+#ct_l=2*L/(1-pow(v_12,2)/(c*c))
+#ct_t=2*L/pow((1-pow(v_12,2)/(c*c)),0.5)
+th=torch.unsqueeze(torch.linspace(0,math.pi*2,200),dim=1).double() #旋转一周，分为200间隔
+
+v_l=np.cos(th)*v_Earth #l方向相对以太的速度，地球轨道速度乘以cos（th）
+v_t=np.sin(th)*v_Earth #t方向相对以太的速度
+
+t_l=(L/(c-v_l)+L/(c+v_l)) #静止以太假设预设下的l方向的路程
+#t_t=2*L/pow(c*c-v_t*v_t,0.5) #静止以太预设下t方向的路程
+t_t=2*L/pow(c*c-v_l*v_l,0.5) #静止以太预设下t方向的路程
+dt_t=t_l-t_t #静止以太预设下的时间差
+
+x2=t_l.expand(200,100)*10000000 #输入是在预设下l的值
+y2=(t_t.expand(200,100)+dt)*10000000 #输出是在预设下+实验结果一起对l方向的值的预测
+
+#y=t_t+dt
+
+
+
+#MM与光行差 总的训练集
+x=torch.cat((x1,x2),0)
+y=torch.cat((y1,y2),0)
+print(x.shape,y.shape)
+
+#自编码的改进版
 class AutoEncoder(nn.Module):
     def __init__(self):
         super(AutoEncoder, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(6, 4),
-            #nn.Tanh(),
-            nn.Linear(4, 2),   # compress to 2 features which can be visualized in plt
+            nn.Linear(100, 50),
+              #nn.Tanh(),
+            nn.Linear(50, 10),
+            nn.Linear(10, 1)# compress to 2 features which can be visualized in plt
                     )
         self.decoder = nn.Sequential(
-            nn.Linear(2, 4),
+            nn.Linear(1,10),
             #nn.Tanh(),
-            nn.Linear(4, 6),
+            nn.Linear(10,50),
+            nn.Linear(50,100),
+            #nn.Linear(4,1),
                     )    
     def forward(self, x):
         encoded = self.encoder(x)
@@ -61,14 +98,55 @@ autoencoder = AutoEncoder()
 optimizer = torch.optim.Adam(autoencoder.parameters(), lr=LR)
 loss_func = torch.nn.MSELoss()
 
-for epoch in range(EPOCH):
-    for step,(b_x,b_y) in enumerate(loader):
-        encoded,decoded=autoencoder(b_x)
-        loss=loss_func(decoded,b_y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+#for epoch in range(EPOCH):
+#    for step,(b_x,b_y) in enumerate(loader):
+#       encoded,decoded=autoencoder(b_x)
+#       loss=loss_func(decoded,b_y)
+
+for t in range(300):
+    encoded,decoded=autoencoder(x2)
+    loss=loss_func(decoded,y2)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    if t % 5 == 0:
+        print('t: ', t, '| train loss: %.4f' % loss.data.numpy())
+    
+
         
-        if step % 5 == 0:
-            print('Epoch: ', epoch, '| train loss: %.4f' % loss.data.numpy())
+#if step % 5 == 0:
+#    print('Epoch: ', epoch, '| train loss: %.4f' % loss.data.numpy())
+
+#test
+autoencoder.eval()  # 让模型处于检测模式
+with torch.no_grad():
+    encoded,output=autoencoder(x2)
+    
+print(torch.div(output,y2))
+
+plt.scatter(v_l,encoded*1000000)  #l方向相对于以太的速度，与模型找到的结构之间的关系
+#plt.scatter(th,-b*100000) 
+#plt.scatter(th,dt)
+#plt.xlim((0,10))
+#plt.ylim((15.6451,15.646))
+plt.show
+
+#test
+autoencoder.eval()  # 让模型处于检测模式
+with torch.no_grad():
+    encoded,output=autoencoder(x1)
+    
+print(torch.div(output,y1))
+
+plt.scatter(v_e,encoded*1000000)  #l方向相对于以太的速度，与模型找到的结构之间的关系
+#plt.scatter(th,-b*100000) 
+#plt.scatter(th,dt)
+#plt.xlim((0,10))
+#plt.ylim((15.6451,15.646))
+plt.show
+
+
+
+
 
