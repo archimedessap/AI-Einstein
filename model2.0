@@ -1,1 +1,132 @@
+import torch
+import torch.nn as nn
+import torch.utils.data as Data
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from matplotlib import cm
+import numpy as np
+import os
+import math
+import itertools
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
+#Hyper Parameter
+num_epochs=10
+batch_size=5
+LR=0.1 #learning rate
+np.set_printoptions(precision=16)
+torch.set_default_dtype(torch.float64)
+
+#光行差原始数据
+t1=0.0000000001 # 假设在望远镜和星光交汇之前的t时间
+c=299792458 # speed of light
+v_Earth=30000 # 地球轨道速度
+v_Earth=30000+70000 #从另一个参照系看
+theta=51*math.pi/180+29*math.pi/(180*60)+20*math.pi/(180*60*60) #恒星真实的赤纬度角度 
+theta=(51+23)*math.pi/180+(31+26)*math.pi/(180*60)+56*math.pi/(180*60*60) #γ Dragon恒星真实的赤纬度角度 +黄赤交角23 26‘
+theta #θ恒星与黄道，也就是地球周年速度方向的真实的夹角
+
+ab_B=np.array([0,4.5,11.5,17.5,25,34,38,39,37,36,28.5,18.5,17.5,11.5,4,0]) #布拉德利观测到的自北向南的偏移
+ab_b=19.5-ab_B #根据布拉德利观测偏移算出的光行差
+ab=ab_b*math.pi/648000 #光行差换算到弧度
+phi=theta-ab #φ 通过观测到的光行差反推布拉德利当时观测到的实际的恒星与黄道的夹角的变化
+
+#通过布拉德利的预测的光行差，我用之反推当时布拉德利使用的地球速度数据
+ab_hyp=np.array([0,4.5,12,18.5,26,34,37,39,38,36.5,29.5,20,17,11.5,4,0])  #布拉德利的预测
+ab_hyp=19.5-ab_hyp
+ab_hyp=ab_hyp*math.pi/648000
+phi_hyp=theta-ab_hyp #布拉德利预测得到的角度
+v_e=(np.sin(theta)/np.tan(phi_hyp)-np.cos(theta))*c #观测时间地球相对于恒星的在一个方向上的速度
+
+#光行差训练数据
+v_ex=np.linspace(0,math.pi*2,100) #旋转一周，分为100间隔
+v_ex=np.cos(v_ex)*v_Earth #l方向相对以太的速度，地球轨道速度乘以cos(th)
+#用线性插值方法扩展原始数据到100个数据点 (用与MM中一样的扩展方法插值）
+ab_ex=np.interp(v_ex,v_e,ab_b)
+
+ab_ex=ab_ex*math.pi/648000 #光行差换算到弧度
+phi_ex=theta-ab_ex #φ 通过观测到的光行差反推布拉德利当时观测到的实际的恒星与黄道的夹角的变化
+
+#MM实验数据扩展
+lam=500*0.000000001 #波长
+x=np.array([0.862,0.832,0.824,0.788,0.754,0.762,0.758,0.756,0.706,0.692,0.686,0.688,0.688,0.678,0.672,0.628])
+
+n_mm=np.arange(16)
+n=np.linspace(0,16,100)
+x_ex=np.interp(n,n_mm,x)
+
+x_ex=torch.unsqueeze(torch.from_numpy(x_ex),dim=1).expand(100,10).double()
+dt=x_ex*0.02*lam/(2*c) #lam为波长，x*0.02为实验得到的
+dt.shape
+
+#MM训练集扩展（100）
+L=11 #仪器臂长
+#ct_l=2*L/(1-pow(v_12,2)/(c*c))
+#ct_t=2*L/pow((1-pow(v_12,2)/(c*c)),0.5)
+th=torch.unsqueeze(torch.linspace(0,math.pi*2,100),dim=1).double() #旋转一周，分为16间隔
+
+v_l=np.cos(th)*v_Earth #地球在l方向相对以太（or 太阳参照系）的速度，地球轨道速度乘以cos（th）
+v_t=np.sin(th)*v_Earth #t方向相对以太的速度
+
+#无拖拽效果下的不同以太的state
+
+for v_E in range(0,100000,3000):
+    c1=pow(c*c+v_E*v_E-2*np.cos(theta)*v_E,0.5) #c1为光行差中的星光速度
+    x1=torch.ones(100,10)*t1 #输入为在静止以太预设下 星光在t时间走过的路程
+    x1=x1.double()
+    y1=(v_ex/np.absolute(c1))*t1/(np.sin(theta)/np.tan(phi_ex)-np.cos(theta))
+    y1=torch.unsqueeze(torch.from_numpy(y1),dim=1).expand(100,10).double() 
+
+    t_l=(L/(c+v_E-v_l)+L/(c-v_E+v_l)) #静止以太假设预设下的l方向的路程
+    t_t=L/pow(c*c+v_E*v_E-v_l*v_l,0.5)+L/pow(c*c+v_E*v_E-v_l*v_l,0.5)
+    dt_t=t_l-t_t #静止以太预设下的时间差
+
+    x2=t_l.expand(100,10)*10000000 #输入是在预设下l的值
+    y2=(t_t.expand(100,10)+dt)*10000000 #输出是在预设下+实验结果一起对l方向的值的预测
+
+    #MM与光行差 总的训练集
+    x=torch.cat((x1,x2),0)
+    y=torch.cat((y1,y2),0)
+       
+    class AutoEncoder(nn.Module):
+        def __init__(self):
+            super(AutoEncoder, self).__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(10, 5),
+                #nn.ReLU(),
+                nn.Linear(5, 1),
+                #nn.Linear(2, 1)# compress to 2 features which can be visualized in plt
+                                    )
+            self.decoder = nn.Sequential(
+                nn.Linear(1,5),
+                #nn.ReLU(),
+                 #nn.Linear(2,5),
+                nn.Linear(5,10),
+                #nn.Linear(4,1),
+                                    )    
+        def forward(self, x):
+            encoded = self.encoder(x)
+            decoded = self.decoder(encoded)
+            return encoded, decoded
+    
+    autoencoder = AutoEncoder()
+    optimizer = torch.optim.Adam(autoencoder.parameters(), lr=LR)
+    loss_func = torch.nn.MSELoss()
+    for t in range(300):
+        encoded,decoded=autoencoder(x)
+        loss=loss_func(decoded,y)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if t % 5 == 0:
+            print('t: ', t, '| train loss: %.4f' % loss.data.numpy())
+                
+    autoencoder.eval()  # 让模型处于检测模式
+    with torch.no_grad():
+        encoded,output=autoencoder(x2)
+                    
+    plt.figure()
+    plt.title('v_E=%i'%(v_E))
+    plt.scatter(v_l,encoded*10000000)  
+    plt.show
