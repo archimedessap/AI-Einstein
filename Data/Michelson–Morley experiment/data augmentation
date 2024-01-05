@@ -1,0 +1,24 @@
+lam=500*0.000000001 #波长
+x=np.array([0.862,0.832,0.824,0.788,0.754,0.762,0.758,0.756,0.706,0.692,0.686,0.688,0.688,0.678,0.672,0.628])
+
+n_mm=np.arange(16)
+n=np.linspace(0,16,100)
+x_ex=np.interp(n,n_mm,x)#把原来的16个数据扩充的100个
+
+x_ex=torch.unsqueeze(torch.from_numpy(x_ex),dim=1).expand(100,200).double()#把100个数据扩维200组同样的
+dt=x_ex*0.02*lam/(2*c) #lam为波长，x*0.02为实验得到的，dt为通过实验数据也就是干涉后的条纹反推的两束光相差的时间间隔
+dt.shape
+#MM训练集扩展（100）
+L=11 #仪器臂长
+#ct_l=2*L/(1-pow(v_12,2)/(c*c))
+#ct_t=2*L/pow((1-pow(v_12,2)/(c*c)),0.5)
+th=torch.unsqueeze(torch.linspace(0,math.pi*2,100),dim=1).double() #旋转一周的弧度，分为100间隔
+
+v_l=np.cos(th)*v_Earth #地球在l方向相对太阳参照系的速度，地球轨道速度乘以cos（th）
+#v_t=np.sin(th)*v_Earth #t方向相对以太的速度
+t_l=(L/(c+v_E-v_l)+L/(c-v_E+v_l)) #静止以太假设预设下的l方向的路程使用时间
+t_t=L/pow(c*c+v_E*v_E-v_l*v_l,0.5)+L/pow(c*c+v_E*v_E-v_l*v_l,0.5)#t方向上用的时间
+dt_t=t_l-t_t #静止以太预设下的时间差
+
+x2=t_l.expand(100,200)*10000000 #输入是在预设下l的值
+y2=(t_t.expand(100,200)+dt)*10000000 #输出是在预设下+实验结果一起对l方向的值的预测
